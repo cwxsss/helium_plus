@@ -86,17 +86,14 @@ jobs:
           echo "BUILD_MODE=$BUILD_MODE" >> $GITHUB_ENV
           echo "Using BUILD_MODE=$BUILD_MODE"
 
-      - name: Setup Xmake
+      - name: Build with Xmake
         shell: powershell
-        run: choco install xmake -y --no-progress
-
-      - name: Configure Xmake
-        shell: cmd
-        run: xmake f -m ${{ env.BUILD_MODE }} -a x64 --yes
-
-      - name: Build Chrome++
-        shell: cmd
-        run: xmake
+        run: |
+          choco install xmake -y --no-progress
+          # Refresh PATH to include newly installed xmake
+          $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
+          xmake f -m ${{ env.BUILD_MODE }} -a x64 --yes
+          xmake
 
       - name: Upload Build Artifacts
         uses: actions/upload-artifact@v6
