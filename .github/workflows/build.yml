@@ -86,12 +86,12 @@ jobs:
           echo "BUILD_MODE=$BUILD_MODE" >> $GITHUB_ENV
           echo "Using BUILD_MODE=$BUILD_MODE"
 
-      - name: Setup Xmake
-        uses: xmake-io/github-action-setup-xmake@v1
-        with:
-          xmake-version: '3.0.5'
+      - name: Install Xmake
+        shell: powershell
+        run: choco install xmake -y --no-progress
 
       - name: Configure Xmake
+        shell: powershell
         run: xmake f -m ${{ env.BUILD_MODE }} -a ${{ matrix.arch }} --yes
 
       - name: Build Chrome++
