@@ -35,7 +35,7 @@ jobs:
             arch: x64
 
     name: ${{ matrix.name }}
-    runs-on: windows-latest
+    runs-on: windows-2022
 
     steps:
       - name: Checkout Repo
@@ -87,35 +87,16 @@ jobs:
           echo "Using BUILD_MODE=$BUILD_MODE"
 
       - name: Setup Xmake
-        uses: xmake-io/github-action-setup-xmake@v1
-        with:
-          xmake-version: latest
-
-      - name: Verify Xmake
-        shell: bash
-        run: |
-          which xmake || echo "xmake not found in PATH"
-          xmake --version || echo "xmake command failed"
-          where clang-cl || echo "clang-cl not found"
-
-      - name: Set CLANG_BIN
-        shell: bash
-        run: |
-          CLANG_BIN=$(dirname "$(where clang-cl | head -n 1)") || true
-          echo "CLANG_BIN=$CLANG_BIN" >> $GITHUB_ENV
+        shell: powershell
+        run: choco install xmake -y --no-progress
 
       - name: Configure Xmake
-        shell: bash
-        run: xmake f -m ${{ env.BUILD_MODE }} -a ${{ matrix.arch }} --toolchain=clang-cl --bin="${{ env.CLANG_BIN }}" --yes
+        shell: cmd
+        run: xmake f -m ${{ env.BUILD_MODE }} -a x64 --yes
 
       - name: Build Chrome++
-        shell: powershell
-        run: |
-          if ("${{ env.BUILD_MODE }}" -eq "debug") {
-            xmake -vD
-          } else {
-            xmake
-          }
+        shell: cmd
+        run: xmake
 
       - name: Upload Build Artifacts
         uses: actions/upload-artifact@v6
