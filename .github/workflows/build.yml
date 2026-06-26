@@ -35,7 +35,7 @@ jobs:
             arch: x64
 
     name: ${{ matrix.name }}
-    runs-on: windows-2022
+    runs-on: windows-latest
 
     steps:
       - name: Checkout Repo
@@ -46,58 +46,30 @@ jobs:
       - name: Update version.h
         shell: bash
         run: |
-          if [ "${{ github.event_name }}" == "push" ]; then
-            COMMIT_HASH=$(git rev-parse --short HEAD)
-            VERSION="alpha-${COMMIT_HASH}"
-            echo "VERSION=$VERSION" >> $GITHUB_ENV
-            sed -i '/#define RELEASE_VER_STR/,/RELEASE_VER_PRE_SUFFIX/c\#define RELEASE_VER_STR "'"$VERSION"'"' src/version.h
-          elif [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            INPUT_VERSION="${{ github.event.inputs.version }}"
-            if [ -n "$INPUT_VERSION" ]; then
-              VERSION="$INPUT_VERSION"
-              if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then
-                echo "::error::Invalid version '$VERSION'. Expected SemVer like 1.2.3 or 1.2.3-alpha.1" >&2
-                exit 1
-              fi
-              echo "VERSION=$VERSION" >> $GITHUB_ENV
-              CORE="${VERSION%%-*}"
-              PRE="${VERSION#*-}"
-              if [ "$PRE" = "$VERSION" ]; then PRE_SUFFIX=""; else PRE_SUFFIX="-$PRE"; fi
-              IFS='.' read -r MAJOR MINOR PATCH <<< "$CORE"
-              sed -i 's/#define RELEASE_VER_MAIN .*/#define RELEASE_VER_MAIN '"$MAJOR"'/' src/version.h
-              sed -i 's/#define RELEASE_VER_SUB .*/#define RELEASE_VER_SUB '"$MINOR"'/' src/version.h
-              sed -i 's/#define RELEASE_VER_FIX .*/#define RELEASE_VER_FIX '"$PATCH"'/' src/version.h
-              sed -i 's|#define RELEASE_VER_PRE_SUFFIX .*|#define RELEASE_VER_PRE_SUFFIX "'"$PRE_SUFFIX"'"|' src/version.h
-            else
-              COMMIT_HASH=$(git rev-parse --short HEAD)
-              VERSION="manual-${COMMIT_HASH}"
-              echo "VERSION=$VERSION" >> $GITHUB_ENV
-            fi
-          fi
+          COMMIT_HASH=$(git rev-parse --short HEAD)
+          VERSION="alpha-${COMMIT_HASH}"
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          sed -i '/#define RELEASE_VER_STR/,/RELEASE_VER_PRE_SUFFIX/c\#define RELEASE_VER_STR "'"$VERSION"'"' src/version.h
 
       - name: Set Build Mode
         shell: bash
         run: |
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ] && [ -n "${{ github.event.inputs.build_mode }}" ]; then
-            BUILD_MODE="${{ github.event.inputs.build_mode }}"
-          else
-            BUILD_MODE="release"
-          fi
+          BUILD_MODE="release"
           echo "BUILD_MODE=$BUILD_MODE" >> $GITHUB_ENV
-          echo "Using BUILD_MODE=$BUILD_MODE"
 
-      - name: Setup LLVM (clang-cl)
-        uses: KyleMayes/install-llvm-action@v2
+      - name: Setup Xmake
+        uses: xmake-io/github-action-setup-xmake@v1
         with:
-          version: "18.1.8"
+          xmake-version: '3.0.5'
 
-      - name: Install Xmake
+      - name: Install LLVM (clang-cl)
         shell: powershell
-        run: choco install xmake -y --no-progress
+        run: choco install llvm -y --no-progress
 
       - name: Build Chrome++
         shell: powershell
         run: |
+          # Refresh PATH
           $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
           $clangBin = Split-Path -Parent (Get-Command clang-cl.exe -ErrorAction SilentlyContinue).Source
           Write-Host "clang-cl found at: $clangBin"
