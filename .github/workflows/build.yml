@@ -35,7 +35,7 @@ jobs:
             arch: x64
 
     name: ${{ matrix.name }}
-    runs-on: windows-latest
+    runs-on: windows-2022
 
     steps:
       - name: Checkout Repo
@@ -91,8 +91,8 @@ jobs:
         with:
           xmake-version: '3.0.5'
 
-      - name: Configure Xmake (clang-cl)
-        run: xmake f -m ${{ env.BUILD_MODE }} -a ${{ matrix.arch }} --toolchain=clang-cl --yes
+      - name: Configure Xmake
+        run: xmake f -m ${{ env.BUILD_MODE }} -a ${{ matrix.arch }} --yes
 
       - name: Build Chrome++
         shell: bash
