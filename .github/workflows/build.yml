@@ -35,7 +35,7 @@ jobs:
             arch: x64
 
     name: ${{ matrix.name }}
-    runs-on: windows-2025
+    runs-on: windows-latest
 
     steps:
       - name: Checkout Repo
@@ -89,15 +89,23 @@ jobs:
       - name: Setup Xmake
         uses: xmake-io/github-action-setup-xmake@v1
         with:
-          xmake-version: '3.0.5'
+          xmake-version: latest
+
+      - name: Verify Xmake
+        shell: bash
+        run: |
+          which xmake || echo "xmake not found in PATH"
+          xmake --version || echo "xmake command failed"
+          where clang-cl || echo "clang-cl not found"
 
       - name: Set CLANG_BIN
         shell: bash
         run: |
-          CLANG_BIN=$(dirname "$(where clang-cl | head -n 1)")
+          CLANG_BIN=$(dirname "$(where clang-cl | head -n 1)") || true
           echo "CLANG_BIN=$CLANG_BIN" >> $GITHUB_ENV
 
       - name: Configure Xmake
+        shell: bash
         run: xmake f -m ${{ env.BUILD_MODE }} -a ${{ matrix.arch }} --toolchain=clang-cl --bin="${{ env.CLANG_BIN }}" --yes
 
       - name: Build Chrome++
