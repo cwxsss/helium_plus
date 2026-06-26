@@ -109,13 +109,13 @@ jobs:
         run: xmake f -m ${{ env.BUILD_MODE }} -a ${{ matrix.arch }} --toolchain=clang-cl --bin="${{ env.CLANG_BIN }}" --yes
 
       - name: Build Chrome++
-        shell: bash
+        shell: powershell
         run: |
-          if [ "${{ env.BUILD_MODE }}" == "debug" ]; then
+          if ("${{ env.BUILD_MODE }}" -eq "debug") {
             xmake -vD
-          else
+          } else {
             xmake
-          fi
+          }
 
       - name: Upload Build Artifacts
         uses: actions/upload-artifact@v6
