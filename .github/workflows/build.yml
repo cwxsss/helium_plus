@@ -86,12 +86,18 @@ jobs:
           echo "BUILD_MODE=$BUILD_MODE" >> $GITHUB_ENV
           echo "Using BUILD_MODE=$BUILD_MODE"
 
-      - name: Build with Xmake (clang-cl)
+      - name: Setup LLVM (clang-cl)
+        uses: KyleMayes/install-llvm-action@v2
+        with:
+          version: "18.1.8"
+
+      - name: Install Xmake
+        shell: powershell
+        run: choco install xmake -y --no-progress
+
+      - name: Build Chrome++
         shell: powershell
         run: |
-          choco install xmake -y --no-progress
-          choco install llvm -y --no-progress
-          # Refresh PATH to include newly installed tools
           $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User")
           $clangBin = Split-Path -Parent (Get-Command clang-cl.exe -ErrorAction SilentlyContinue).Source
           Write-Host "clang-cl found at: $clangBin"
