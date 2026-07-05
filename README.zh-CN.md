@@ -55,12 +55,57 @@ Helium++ 是面向 Windows 版 Helium 的 `version.dll` 注入项目。把生成
 
 ## 构建
 
+### 本地 x64 构建
+
+先安装带 C++ 工具链的 Visual Studio / Visual Studio Build Tools，再安装
+[xmake](https://xmake.io/)。在仓库根目录执行：
+
 ```powershell
-xmake f -m release
+xmake f -m release -a x64 --toolchain=clang-cl --yes
 xmake
 ```
 
-Release 构建会输出 `version.dll`。
+Release 构建会输出 `build/release/version.dll`。实际使用时，把它和
+`src/chrome++.ini` 一起放到 Helium 的 `chrome.exe` 同目录。
+
+### 上传源码到 GitHub
+
+```powershell
+git status
+git add .
+git commit -m "描述本次修改"
+git push origin main
+```
+
+### 通过 GitHub Actions 打包
+
+进入 GitHub 仓库的 **Actions** 页面，运行 **Build** workflow。
+
+- 手动运行 `workflow_dispatch` 可生成构建 artifact。
+- 当前只构建 x64 架构。
+- artifact 中包含 x64 的 `version.dll`，需要搭配 `src/chrome++.ini` 使用。
+
+### 通过 GitHub Actions 发布 Release
+
+运行 **Release** workflow。它只构建 x64，并发布一个 `.7z` 包，包内包含：
+
+- `version.dll`
+- `chrome++.ini`
+
+支持两种发布方式：
+
+```powershell
+# 使用 GitHub CLI 手动触发
+gh workflow run Release --repo cwxsss/helium_plus --ref main -f version=1.17.0 -f prerelease=false
+```
+
+```powershell
+# 推送 tag 触发
+git tag 1.17.0
+git push origin 1.17.0
+```
+
+发布资产名称为 `Helium++_v<version>_x64.7z`。
 
 ## 许可
 

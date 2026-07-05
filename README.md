@@ -55,12 +55,59 @@ See [`src/chrome++.ini`](src/chrome++.ini) for the full public configuration sur
 
 ## Build
 
+### Local x64 build
+
+Install Visual Studio Build Tools or Visual Studio with C++ support, then install
+[xmake](https://xmake.io/). From the repository root:
+
 ```powershell
-xmake f -m release
+xmake f -m release -a x64 --toolchain=clang-cl --yes
 xmake
 ```
 
-The release build emits `version.dll`.
+The release build emits `build/release/version.dll`. Package it together with
+`src/chrome++.ini`; both files should be placed next to Helium's `chrome.exe`.
+
+### Push source to GitHub
+
+```powershell
+git status
+git add .
+git commit -m "Describe the change"
+git push origin main
+```
+
+### Build with GitHub Actions
+
+Use the **Build** workflow in the GitHub Actions tab.
+
+- Run it manually with `workflow_dispatch` when you want a build artifact.
+- The workflow builds x64 only.
+- The uploaded artifact contains the x64 `version.dll`; use it with
+  `src/chrome++.ini`.
+
+### Publish a GitHub Release with Actions
+
+Use the **Release** workflow. It builds x64 only and publishes a `.7z` package
+containing:
+
+- `version.dll`
+- `chrome++.ini`
+
+There are two supported release paths:
+
+```powershell
+# Manual trigger with GitHub CLI
+gh workflow run Release --repo cwxsss/helium_plus --ref main -f version=1.17.0 -f prerelease=false
+```
+
+```powershell
+# Tag trigger
+git tag 1.17.0
+git push origin 1.17.0
+```
+
+The release asset is named `Helium++_v<version>_x64.7z`.
 
 ## License
 

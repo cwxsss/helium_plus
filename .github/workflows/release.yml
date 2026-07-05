@@ -25,7 +25,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        arch: [x86, x64, arm64]
+        arch: [x64]
 
     steps:
       - name: Checkout repository
@@ -138,21 +138,12 @@ jobs:
       - name: Package release assets
         run: |
           mkdir -p release
-          for arch in x86 x64 arm64; do
+          for arch in x64; do
             src="artifacts/Helium++_${VERSION}_${arch}"
             test -f "$src/version.dll"
             test -f "$src/chrome++.ini"
             (cd "$src" && 7z a -mx=9 -m0=lzma2 -mmt=on "../../release/Helium++_v${VERSION}_${arch}.7z" version.dll chrome++.ini)
           done
-
-          mkdir -p all/x86 all/x64 all/arm64
-          cp "artifacts/Helium++_${VERSION}_x86/version.dll" all/x86/version.dll
-          cp "artifacts/Helium++_${VERSION}_x86/chrome++.ini" all/x86/chrome++.ini
-          cp "artifacts/Helium++_${VERSION}_x64/version.dll" all/x64/version.dll
-          cp "artifacts/Helium++_${VERSION}_x64/chrome++.ini" all/x64/chrome++.ini
-          cp "artifacts/Helium++_${VERSION}_arm64/version.dll" all/arm64/version.dll
-          cp "artifacts/Helium++_${VERSION}_arm64/chrome++.ini" all/arm64/chrome++.ini
-          7z a -mx=9 -m0=lzma2 -mmt=on "release/Helium++_v${VERSION}_x86_x64_arm64.7z" ./all/*
 
       - name: Write release notes
         run: |
@@ -160,12 +151,9 @@ jobs:
           Helium++ ${VERSION}
 
           Assets:
-          - Helium++_v${VERSION}_x86.7z
           - Helium++_v${VERSION}_x64.7z
-          - Helium++_v${VERSION}_arm64.7z
-          - Helium++_v${VERSION}_x86_x64_arm64.7z
 
-          Each architecture package contains:
+          The package contains:
           - version.dll
           - chrome++.ini
 
