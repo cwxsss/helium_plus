@@ -1,0 +1,143 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/version.h'
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: 'Build workflow run ID (for re-running a failed release)'
+        required: true
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Get Version from version.h
+        run: |
+          MAJOR=$(grep '#define RELEASE_VER_MAIN' src/version.h | awk '{print $3}')
+          MINOR=$(grep '#define RELEASE_VER_SUB' src/version.h | awk '{print $3}')
+          PATCH=$(grep '#define RELEASE_VER_FIX' src/version.h | awk '{print $3}')
+          PRE_SUFFIX=$(grep '#define RELEASE_VER_PRE_SUFFIX' src/version.h | awk '{print $3}' | tr -d '"')
+          VERSION="$MAJOR.$MINOR.$PATCH$PRE_SUFFIX"
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          if [ -n "$PRE_SUFFIX" ]; then
+            echo "IS_PRERELEASE=true" >> $GITHUB_ENV
+          else
+            echo "IS_PRERELEASE=false" >> $GITHUB_ENV
+          fi
+
+      - name: Get Last Tag
+        run: |
+          if [ "${{ env.IS_PRERELEASE }}" = "true" ]; then
+            LAST_TAG=$(git tag --sort=-version:refname | head -n 1)
+          else
+            LAST_TAG=$(git tag --sort=-version:refname | grep -v -- '-' | head -n 1)
+          fi
+          if [ -z "$LAST_TAG" ]; then LAST_TAG="0.0.0"; fi
+          echo "LAST_TAG=$LAST_TAG" >> $GITHUB_ENV
+
+      - name: Create Tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -f -a "${{ env.VERSION }}" -m "${{ env.VERSION }}"
+
+      - name: Generate Release Notes
+        run: |
+          chmod +x .github/workflows/genReleaseNote.sh
+          .github/workflows/genReleaseNote.sh -v ${{ env.LAST_TAG }}...${{ env.VERSION }}
+
+      - name: Get Build Run ID
+        id: workflow
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            RUN_ID="${{ github.event.inputs.run_id }}"
+          else
+            RUN_ID=$(git log -1 --pretty=format:%b | grep -oP '(?<=Build-Run-Id: )\d+')
+          fi
+          if [ -z "$RUN_ID" ]; then
+            echo "Could not determine build run ID." >&2
+            exit 1
+          fi
+          echo "run_id=$RUN_ID" >> $GITHUB_OUTPUT
+
+      - name: Get SetDll Latest Release
+        id: setdll
+        run: |
+          RELEASE_INFO=$(gh api repos/Bush2021/setdll/releases/latest)
+          DOWNLOAD_URL=$(echo "$RELEASE_INFO" | jq -r '.assets[0].browser_download_url')
+          echo "download_url=$DOWNLOAD_URL" >> $GITHUB_OUTPUT
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download Build Artifacts
+        uses: actions/download-artifact@v7
+        with:
+          path: build_artifacts
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ steps.workflow.outputs.run_id }}
+
+      - name: Package All Artifacts
+        run: |
+          mkdir -p artifacts/x86/{App,Data,Cache}
+          mkdir -p artifacts/x64/{App,Data,Cache}
+          mkdir -p artifacts/arm64/{App,Data,Cache}
+          cp -r build_artifacts/version-x86-${{ env.VERSION }}/* artifacts/x86/App/
+          cp -r build_artifacts/version-x64-${{ env.VERSION }}/* artifacts/x64/App/
+          cp -r build_artifacts/version-arm64-${{ env.VERSION }}/* artifacts/arm64/App/
+          cp src/chrome++.ini artifacts/x86/App/
+          cp src/chrome++.ini artifacts/x64/App/
+          cp src/chrome++.ini artifacts/arm64/App/
+          cd artifacts
+          7z a -mx=9 -m0=lzma2 -mmt=on ../Chrome++_v${{ env.VERSION }}_x86_x64_arm64.7z *
+          cd ..
+
+      - name: Package SetDll
+        run: |
+          mkdir -p setdll_package_contents
+          wget -O setdll_latest.7z ${{ steps.setdll.outputs.download_url }}
+          7z x setdll_latest.7z -o./setdll_package_contents
+          rm setdll_latest.7z
+          cp ./build_artifacts/version-x86-${{ env.VERSION }}/version.dll ./setdll_package_contents/version-x86.dll
+          cp ./build_artifacts/version-x64-${{ env.VERSION }}/version.dll ./setdll_package_contents/version-x64.dll
+          cp ./build_artifacts/version-arm64-${{ env.VERSION }}/version.dll ./setdll_package_contents/version-arm64.dll
+          cp ./src/chrome++.ini ./setdll_package_contents/chrome++.ini
+          cd setdll_package_contents
+          echo "Contents of 'setdll_package_contents' directory before zipping:"
+          ls -Al
+          7z a -mx=9 -ms=on -m0=lzma2 -mmt=on ../setdll.7z *
+          cd ..
+
+      - name: Attest Release Packages
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: |
+            Chrome++_v${{ env.VERSION }}_x86_x64_arm64.7z
+            setdll.7z
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2.5.0
+        with:
+          files: |
+            Chrome++_v${{ env.VERSION }}_x86_x64_arm64.7z
+            setdll.7z
+          body_path: release.md
+          tag_name: ${{ env.VERSION }}
+          name: ${{ env.VERSION }}
+          prerelease: ${{ env.IS_PRERELEASE }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.TOKEN }}

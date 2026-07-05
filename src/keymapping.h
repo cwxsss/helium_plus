@@ -1,0 +1,6 @@
+#ifndef CHROME_PLUS_SRC_KEYMAPPING_H_
+#define CHROME_PLUS_SRC_KEYMAPPING_H_
+
+void KeyMapping();
+
+#endif  // CHROME_PLUS_SRC_KEYMAPPING_H_
