@@ -35,7 +35,7 @@ const std::wstring& GetAppDir() {
 }
 
 const std::wstring& GetIniPath() {
-  static std::wstring ini_path = GetAppDir() + L"\\helium++.ini";
+  static std::wstring ini_path = GetAppDir() + L"\\chrome++.ini";
   return ini_path;
 }
 

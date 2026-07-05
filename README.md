@@ -1,20 +1,20 @@
 ﻿# Helium++
 
-Helium++ is a `version.dll` injection project for Helium on Windows. It is loaded alongside `helium.exe` and augments browser behavior at startup with tab, hotkey, portable, command-line, and policy-related features.
+Helium++ is a `version.dll` injection project for Helium on Windows. It is loaded alongside `chrome.exe`, which is Helium's Windows browser executable, and augments browser behavior at startup with tab, hotkey, portable, command-line, and policy-related features.
 
 This project is adapted from Chrome++ Next for the Chromium-based [Helium](https://github.com/imputnet/helium) browser.
 
 ## Overview
 
 - Targets Helium on Windows.
-- Works by placing `version.dll` next to `helium.exe`.
+- Works by placing `version.dll` next to Helium's `chrome.exe`.
 - Focuses on practical browser behavior changes instead of UI wrappers or extensions.
 - Prioritizes capabilities that browser extensions cannot implement well.
 
 ## Installation
 
-- Put `version.dll` in the same directory as `helium.exe`.
-- Put `helium++.ini` in the same directory to customize behavior.
+- Put `version.dll` in the same directory as Helium's `chrome.exe`.
+- Put `chrome++.ini` in the same directory to customize behavior.
 - The project is intended for portable Helium deployments.
 - If `version.dll` is not loaded correctly, you can try [setdll](https://github.com/Bush2021/setdll/).
 
@@ -47,11 +47,11 @@ This project is adapted from Chrome++ Next for the Chromium-based [Helium](https
 - Ignore enterprise policies with `ignore_policies`.
 - Enable the `win32k` fallback only when Helium++ itself causes startup crashes.
 - Suppress false "out of date" upgrade notifications on portable installs with `suppress_false_upgrade_notification`.
-- Additional public options such as `show_password` are documented in [`src/helium++.ini`](src/helium++.ini).
+- Additional public options such as `show_password` are documented in [`src/chrome++.ini`](src/chrome++.ini).
 
 ## Configuration Reference
 
-See [`src/helium++.ini`](src/helium++.ini) for the full public configuration surface.
+See [`src/chrome++.ini`](src/chrome++.ini) for the full public configuration surface.
 
 ## Build
 

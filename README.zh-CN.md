@@ -1,20 +1,20 @@
 ﻿# Helium++
 
-Helium++ 是面向 Windows 版 Helium 的 `version.dll` 注入项目。把生成的 `version.dll` 放到 `helium.exe` 同目录后，它会随 Helium 启动加载，并增强标签页、快捷键、便携化、命令行参数和策略相关行为。
+Helium++ 是面向 Windows 版 Helium 的 `version.dll` 注入项目。把生成的 `version.dll` 放到 Helium 实际浏览器入口 `chrome.exe` 同目录后，它会随 Helium 启动加载，并增强标签页、快捷键、便携化、命令行参数和策略相关行为。
 
 本项目基于 Chrome++ Next 修改，适配 Chromium 内核的 [Helium](https://github.com/imputnet/helium) 浏览器。
 
 ## 项目简介
 
 - 面向 Windows 下的 Helium。
-- 通过将 `version.dll` 放在 `helium.exe` 同目录的方式工作。
+- 通过将 `version.dll` 放在 Helium 的 `chrome.exe` 同目录的方式工作。
 - 重点是增强浏览器原生行为，而不是做额外 UI 外壳或扩展。
 - 优先处理扩展难以实现、或外部工具不容易解决的能力。
 
 ## 安装
 
-- 请将 `version.dll` 放在 `helium.exe` 同一目录。
-- 如需自定义配置，请将 `helium++.ini` 放在同一目录。
+- 请将 `version.dll` 放在 Helium 的 `chrome.exe` 同一目录。
+- 如需自定义配置，请将 `chrome++.ini` 放在同一目录。
 - 本项目面向便携式 Helium 部署场景。
 - 如果 `version.dll` 没有被正确加载，可以尝试 [setdll](https://github.com/Bush2021/setdll/)。
 
@@ -47,11 +47,11 @@ Helium++ 是面向 Windows 版 Helium 的 `version.dll` 注入项目。把生成
 - 通过 `ignore_policies` 忽略企业策略。
 - 仅在 Helium++ 自身导致启动崩溃时再考虑启用 `win32k` 兜底选项。
 - 通过 `suppress_false_upgrade_notification` 抑制便携版上的错误升级提示。
-- `show_password` 等其它公开选项以 [`src/helium++.ini`](src/helium++.ini) 为准。
+- `show_password` 等其它公开选项以 [`src/chrome++.ini`](src/chrome++.ini) 为准。
 
 ## 配置说明
 
-完整公开配置请参见 [`src/helium++.ini`](src/helium++.ini)。
+完整公开配置请参见 [`src/chrome++.ini`](src/chrome++.ini)。
 
 ## 构建
 
