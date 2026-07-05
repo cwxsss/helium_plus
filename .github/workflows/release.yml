@@ -38,6 +38,8 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ github.event.inputs.version }}" ]; then
             VERSION="${{ github.event.inputs.version }}"
+          elif [ "${{ github.event_name }}" = "push" ]; then
+            VERSION="${GITHUB_REF_NAME}"
           else
             MAJOR=$(grep '#define RELEASE_VER_MAIN' src/version.h | awk '{print $3}')
             MINOR=$(grep '#define RELEASE_VER_SUB' src/version.h | awk '{print $3}')
@@ -140,7 +142,7 @@ jobs:
             src="artifacts/Helium++_${VERSION}_${arch}"
             test -f "$src/version.dll"
             test -f "$src/chrome++.ini"
-            (cd "$src" && 7z a -mx=9 -m0=lzma2 -mmt=on "../../../release/Helium++_v${VERSION}_${arch}.7z" version.dll chrome++.ini)
+            (cd "$src" && 7z a -mx=9 -m0=lzma2 -mmt=on "../../release/Helium++_v${VERSION}_${arch}.7z" version.dll chrome++.ini)
           done
 
           mkdir -p all/x86 all/x64 all/arm64
