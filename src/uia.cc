@@ -35,21 +35,15 @@ class ScopedVariant {
 };
 
 struct CachedClassConditions {
-  ComPtr<IUIAutomationCondition> horizontal_tab_strip_region_view;
   ComPtr<IUIAutomationCondition> tab_strip_drag_context;
   ComPtr<IUIAutomationCondition> tab_container_impl;
   ComPtr<IUIAutomationCondition> vertical_unpinned_tab_container_view;
-  ComPtr<IUIAutomationCondition> scroll_view;
   ComPtr<IUIAutomationCondition> tab;
   ComPtr<IUIAutomationCondition> vertical_tab_view;
   ComPtr<IUIAutomationCondition> tab_close_button;
   ComPtr<IUIAutomationCondition> bookmark_button;
   ComPtr<IUIAutomationCondition> menu_item_view;
-  ComPtr<IUIAutomationCondition> top_container_view;
-  ComPtr<IUIAutomationCondition> omnibox_view_views;
-  ComPtr<IUIAutomationCondition> omnibox_result_view;
   ComPtr<IUIAutomationCondition> tab_strip_control_button;
-  ComPtr<IUIAutomationCondition> frame_grab_handle;
 };
 
 enum class TabContainerKind {
@@ -124,9 +118,6 @@ bool InitializeClassConditions(UiaSession* session) {
 
   auto& conditions = session->class_conditions;
   return CreateClassCondition(session->automation,
-                              L"HorizontalTabStripRegionView",
-                              &conditions.horizontal_tab_strip_region_view) &&
-         CreateClassCondition(session->automation,
                               L"TabStrip::TabDragContextImpl",
                               &conditions.tab_strip_drag_context) &&
          CreateClassCondition(session->automation, L"TabContainerImpl",
@@ -134,8 +125,6 @@ bool InitializeClassConditions(UiaSession* session) {
          CreateClassCondition(
              session->automation, L"VerticalUnpinnedTabContainerView",
              &conditions.vertical_unpinned_tab_container_view) &&
-         CreateClassCondition(session->automation, L"ScrollView",
-                              &conditions.scroll_view) &&
          CreateClassCondition(session->automation, L"Tab", &conditions.tab) &&
          CreateClassCondition(session->automation, L"VerticalTabView",
                               &conditions.vertical_tab_view) &&
@@ -145,16 +134,8 @@ bool InitializeClassConditions(UiaSession* session) {
                               &conditions.bookmark_button) &&
          CreateClassCondition(session->automation, L"MenuItemView",
                               &conditions.menu_item_view) &&
-         CreateClassCondition(session->automation, L"TopContainerView",
-                              &conditions.top_container_view) &&
-         CreateClassCondition(session->automation, L"OmniboxViewViews",
-                              &conditions.omnibox_view_views) &&
-         CreateClassCondition(session->automation, L"OmniboxResultView",
-                              &conditions.omnibox_result_view) &&
          CreateClassCondition(session->automation, L"TabStripControlButton",
-                              &conditions.tab_strip_control_button) &&
-         CreateClassCondition(session->automation, L"FrameGrabHandle",
-                              &conditions.frame_grab_handle);
+                              &conditions.tab_strip_control_button);
 }
 
 UiaSession* GetUiaSession() {
@@ -876,11 +857,36 @@ ComPtr<IUIAutomationElement> FindBookmarkInAnchor(
   return nullptr;
 }
 
+// True when `window` hosts web content. WebContents on Windows always carries
+// a `Chrome_RenderWidgetHostHWND` child HWND, kept by Chromium for
+// screen-reader and legacy-trackpad-driver compat
+// (content/browser/renderer_host/legacy_render_widget_host_win.h);
+// views-only windows such as bookmark folder menus have no child HWNDs at
+// all. Should Chromium ever drop the legacy HWND, this check fails open and
+// merely restores the pre-gate behavior.
+bool WindowHostsWebContent(HWND window) {
+  bool found = false;
+  EnumChildWindows(
+      window,
+      [](HWND child, LPARAM param) -> BOOL {
+        std::array<wchar_t, 64> class_name{};
+        if (GetClassNameW(child, class_name.data(),
+                          static_cast<int>(class_name.size())) &&
+            std::wstring_view(class_name.data()) ==
+                L"Chrome_RenderWidgetHostHWND") {
+          *reinterpret_cast<bool*>(param) = true;
+          return FALSE;
+        }
+        return TRUE;
+      },
+      reinterpret_cast<LPARAM>(&found));
+  return found;
+}
+
 // Resolve a bookmark under `pt` without `ElementFromPoint`, mirroring the tab
-// hit-testing approach (see the comment block above `FindTabHitResult`). The
-// scan is anchored to a subtree that has no web-content branch, so `FindFirst`
-// can never run off the browser chrome and descend into the renderer
-// accessibility tree.
+// hit-testing approach (see the comment block above `FindTabHitResult`).
+// Every scan stays out of web content: the anchored subtrees have no content
+// branch, and the discovery walk is the chrome-only BFS.
 ComPtr<IUIAutomationElement>
 FindBookmarkCoveringPoint(const UiaSession& session, HWND window, POINT pt) {
   const auto window_element = GetElementFromWindow(session, window);
@@ -893,17 +899,27 @@ FindBookmarkCoveringPoint(const UiaSession& session, HWND window, POINT pt) {
   // bookmark bar beneath it, and the omnibox results popup is mirrored under a
   // different `BrowserRootView` branch (outside `TopContainerView`), so a
   // covered `BookmarkButton` is unambiguous -- no narrowing to
-  // `BookmarkBarView` and no former #238 z-order workaround needed.
-  if (const auto top_container = FindFirstDescendantByClass(
-          window_element, session.class_conditions.top_container_view)) {
+  // `BookmarkBarView` and no former #238 z-order workaround needed. The BFS
+  // (not a root-scoped `FindFirst`) matters on windows that lack
+  // `TopContainerView`, e.g. undocked DevTools: pre-order `FindFirst` walks
+  // the entire renderer tree before failing and switches web-contents
+  // accessibility on, the #270 failure mode.
+  if (const auto top_container = FindShallowDescendantByClasses(
+          session.control_view_walker.Get(), window_element,
+          {L"TopContainerView"}, /*max_visited=*/256)) {
     return FindBookmarkInAnchor(top_container,
                                 session.class_conditions.bookmark_button, pt);
   }
 
-  // Bookmark folder menu: its own top-level popup window, whose entire tree is
-  // content-free, so the window root is already a safe anchor. Items are
-  // `MenuItemView` (separators share the class but `IsValidBookmark` rejects
-  // them).
+  // Bookmark folder menu: its own top-level popup window, all views, so the
+  // window root is a safe anchor for the subtree `FindAll`. Windows that host
+  // web content without `TopContainerView` (undocked DevTools again) must be
+  // screened out first, or that `FindAll` crosses the renderer tree. Items
+  // are `MenuItemView` (separators share the class but `IsValidBookmark`
+  // rejects them).
+  if (WindowHostsWebContent(window)) {
+    return nullptr;
+  }
   return FindBookmarkInAnchor(window_element,
                               session.class_conditions.menu_item_view, pt);
 }
@@ -1003,7 +1019,7 @@ bool IsOnTabBar(POINT pt) {
 
   const HWND hwnd = WindowFromPoint(pt);
   const HWND root = hwnd ? GetAncestor(hwnd, GA_ROOT) : nullptr;
-  if (!root || !IsChromeWindow(root)) {
+  if (!root || !IsBrowserWindow(root)) {
     return false;
   }
 
