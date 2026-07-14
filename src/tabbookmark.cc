@@ -12,6 +12,9 @@ namespace {
 constexpr UINT kDefaultDpi = 96;
 POINT lbutton_down_point = {-1, -1};
 
+constexpr UINT_PTR kHoverTabTimerId = 0x68764254;
+HWND hover_tab_root = nullptr;
+
 enum class KeepTabTrigger {
   kRightClick = 0,
   kMiddleClick,
@@ -40,6 +43,82 @@ bool IsNeedKeep(int tab_count, KeepTabTrigger trigger) {
     keep_tab = true;
   }
   return keep_tab;
+}
+
+bool IsAnyMouseButtonPressed() {
+  return IsKeyPressed(VK_LBUTTON) || IsKeyPressed(VK_RBUTTON) ||
+         IsKeyPressed(VK_MBUTTON);
+}
+
+void CancelHoverTabTimer() {
+  if (!hover_tab_root) {
+    return;
+  }
+  KillTimer(hover_tab_root, kHoverTabTimerId);
+  hover_tab_root = nullptr;
+}
+
+void CALLBACK HoverTabTimerProc(HWND hwnd, UINT, UINT_PTR event_id, DWORD) {
+  KillTimer(hwnd, event_id);
+  if (hover_tab_root == hwnd) {
+    hover_tab_root = nullptr;
+  }
+
+  if (IsAnyMouseButtonPressed() || GetCapture() != nullptr) {
+    return;
+  }
+
+  POINT pt;
+  if (!GetCursorPos(&pt)) {
+    return;
+  }
+
+  const HWND point_window = WindowFromPoint(pt);
+  const HWND point_root =
+      point_window ? GetAncestor(point_window, GA_ROOT) : nullptr;
+  if (point_root != hwnd || GetForegroundWindow() != hwnd) {
+    return;
+  }
+
+  const auto hit = FindTabHitResult(pt, false, true);
+  if (!hit || hit->on_close_button) {
+    return;
+  }
+
+  SelectTab(*hit);
+}
+
+void HandleHoverTab(const MOUSEHOOKSTRUCT* pmouse) {
+  if (!config.IsHoverTab()) {
+    return;
+  }
+
+  if (IsAnyMouseButtonPressed() || GetCapture() != nullptr) {
+    CancelHoverTabTimer();
+    return;
+  }
+
+  if (!IsBrowserWindow(pmouse->hwnd)) {
+    CancelHoverTabTimer();
+    return;
+  }
+
+  const HWND root = GetAncestor(pmouse->hwnd, GA_ROOT);
+  if (!root) {
+    CancelHoverTabTimer();
+    return;
+  }
+
+  if (root != hover_tab_root) {
+    CancelHoverTabTimer();
+  }
+
+  if (SetTimer(root, kHoverTabTimerId, config.GetHoverTabDelay(),
+               HoverTabTimerProc)) {
+    hover_tab_root = root;
+  } else {
+    hover_tab_root = nullptr;
+  }
 }
 
 // Use the mouse wheel to switch tabs
@@ -265,15 +344,21 @@ bool TabBookmarkMouseHandler(WPARAM wParam, LPARAM lParam) {
   static bool closing_tab_by_right = false;
 
   switch (wParam) {
+    case WM_MOUSEMOVE:
+      HandleHoverTab(pmouse);
+      return false;
     case WM_LBUTTONDOWN:
+      CancelHoverTabTimer();
       // Simply record the position of `LBUTTONDOWN` for drag detection
       closing_tab_by_dblclk = false;
       lbutton_down_point = pmouse->pt;
       return false;
     case WM_MBUTTONDOWN:
+      CancelHoverTabTimer();
       closing_tab_by_middle = false;
       return false;
     case WM_RBUTTONDOWN:
+      CancelHoverTabTimer();
       closing_tab_by_right = false;
       return false;
     case WM_LBUTTONUP:
@@ -305,6 +390,7 @@ bool TabBookmarkMouseHandler(WPARAM wParam, LPARAM lParam) {
       }
       return false;
     case WM_MOUSEWHEEL:
+      CancelHoverTabTimer();
       if (HandleMouseWheel(lParam, pmouse)) {
         // Mark it true only when a tab switch is performed via mouse wheel with
         // right button pressed. Otherwise, normal mouse wheel to switch tabs
@@ -410,6 +496,8 @@ bool TabBookmarkKeyboardHandler(WPARAM wParam, LPARAM lParam) {
   if (lParam & 0x80000000) {
     return false;
   }
+
+  CancelHoverTabTimer();
 
   if (HandleKeepTab(wParam)) {
     return true;
