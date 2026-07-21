@@ -85,7 +85,6 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path "release/Helium++_${{ env.VERSION }}_${{ matrix.arch }}" | Out-Null
           Copy-Item -LiteralPath "build/release/version.dll" -Destination "release/Helium++_${{ env.VERSION }}_${{ matrix.arch }}/version.dll"
-          Copy-Item -LiteralPath "src/chrome++.ini" -Destination "release/Helium++_${{ env.VERSION }}_${{ matrix.arch }}/chrome++.ini"
 
       - name: Upload staged files
         uses: actions/upload-artifact@v4
@@ -141,8 +140,7 @@ jobs:
           for arch in x64; do
             src="artifacts/Helium++_${VERSION}_${arch}"
             test -f "$src/version.dll"
-            test -f "$src/chrome++.ini"
-            (cd "$src" && 7z a -mx=9 -m0=lzma2 -mmt=on "../../release/Helium++_v${VERSION}_${arch}.7z" version.dll chrome++.ini)
+            (cd "$src" && 7z a -mx=9 -m0=lzma2 -mmt=on "../../release/Helium++_v${VERSION}_${arch}.7z" version.dll)
           done
 
       - name: Write release notes
@@ -155,9 +153,8 @@ jobs:
 
           The package contains:
           - version.dll
-          - chrome++.ini
 
-          Install by placing both files next to Helium's chrome.exe.
+          Install by placing version.dll next to Helium's chrome.exe. The package does not replace chrome++.ini.
           EOF
 
       - name: Create GitHub release

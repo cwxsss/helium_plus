@@ -66,8 +66,9 @@ xmake f -m release -a x64 --toolchain=clang-cl --yes
 xmake
 ```
 
-The release build emits `build/release/version.dll`. Package it together with
-`src/chrome++.ini`; both files should be placed next to Helium's `chrome.exe`.
+The release build emits `build/release/version.dll`. Release packages contain
+only that DLL. Keep or create `chrome++.ini` from `src/chrome++.ini` separately;
+updates must not overwrite an existing configuration file.
 
 ### Push source to GitHub
 
@@ -84,16 +85,18 @@ Use the **Build** workflow in the GitHub Actions tab.
 
 - Run it manually with `workflow_dispatch` when you want a build artifact.
 - The workflow builds x64 only.
-- The uploaded artifact contains the x64 `version.dll`; use it with
-  `src/chrome++.ini`.
+- The uploaded artifact contains only the x64 `version.dll`. Keep the existing
+  `chrome++.ini`, or create one from `src/chrome++.ini` for a new install.
 
 ### Publish a GitHub Release with Actions
 
 Use the **Release** workflow. It builds x64 only and publishes a `.7z` package
-containing:
+containing only:
 
 - `version.dll`
-- `chrome++.ini`
+
+The release never replaces `chrome++.ini`; use the local configuration already
+next to Helium's `chrome.exe`.
 
 There are two supported release paths:
 

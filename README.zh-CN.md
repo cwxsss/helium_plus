@@ -66,8 +66,8 @@ xmake f -m release -a x64 --toolchain=clang-cl --yes
 xmake
 ```
 
-Release 构建会输出 `build/release/version.dll`。实际使用时，把它和
-`src/chrome++.ini` 一起放到 Helium 的 `chrome.exe` 同目录。
+Release 构建会输出 `build/release/version.dll`。发布包只包含该 DLL；
+`chrome++.ini` 请继续保留现有文件，或在首次安装时从 `src/chrome++.ini` 单独创建，更新不应覆盖已有配置。
 
 ### 上传源码到 GitHub
 
@@ -84,14 +84,15 @@ git push origin main
 
 - 手动运行 `workflow_dispatch` 可生成构建 artifact。
 - 当前只构建 x64 架构。
-- artifact 中包含 x64 的 `version.dll`，需要搭配 `src/chrome++.ini` 使用。
+- artifact 中只包含 x64 的 `version.dll`。请保留现有 `chrome++.ini`，首次安装时可从 `src/chrome++.ini` 单独创建。
 
 ### 通过 GitHub Actions 发布 Release
 
-运行 **Release** workflow。它只构建 x64，并发布一个 `.7z` 包，包内包含：
+运行 **Release** workflow。它只构建 x64，并发布一个 `.7z` 包，包内只包含：
 
 - `version.dll`
-- `chrome++.ini`
+
+发布包不会替换 `chrome++.ini`；请使用 Helium 的 `chrome.exe` 同目录中已有的配置文件。
 
 支持两种发布方式：
 
