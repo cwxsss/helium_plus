@@ -309,7 +309,7 @@ ComPtr<IUIAutomationElement> FindBrowserViewFromTopChrome(
   // chrome above the find widget. Require the exact top-level Views HWND so
   // point lookup cannot start from a hosted child such as web content.
   const HWND point_window = WindowFromPoint(point);
-  if (point_window != window || !IsChromeWindow(point_window)) {
+  if (point_window != window || !IsBrowserWindow(point_window)) {
     return nullptr;
   }
 
@@ -1073,7 +1073,7 @@ FindBookmarkCoveringPoint(const UiaSession& session, HWND window, POINT pt) {
   // uncovered browser chrome, but keep it gated on a Views HWND so a page
   // click never crosses `Chrome_RenderWidgetHostHWND`.
   const HWND point_window = WindowFromPoint(pt);
-  if (point_window && IsChromeWindow(point_window)) {
+  if (point_window && IsBrowserWindow(point_window)) {
     ComPtr<IUIAutomationElement> pointed;
     if (SUCCEEDED(session.automation->ElementFromPoint(
             pt, pointed.ReleaseAndGetAddressOf())) &&
