@@ -38,8 +38,10 @@ struct CachedClassConditions {
   ComPtr<IUIAutomationCondition> tab_strip_drag_context;
   ComPtr<IUIAutomationCondition> tab_container_impl;
   ComPtr<IUIAutomationCondition> vertical_unpinned_tab_container_view;
+  ComPtr<IUIAutomationCondition> unpinned_tab_container_view;
   ComPtr<IUIAutomationCondition> tab;
   ComPtr<IUIAutomationCondition> vertical_tab_view;
+  ComPtr<IUIAutomationCondition> tab_view;
   ComPtr<IUIAutomationCondition> tab_close_button;
   ComPtr<IUIAutomationCondition> bookmark_button;
   ComPtr<IUIAutomationCondition> menu_item_view;
@@ -49,6 +51,12 @@ struct CachedClassConditions {
 enum class TabContainerKind {
   kHorizontal,
   kVertical,
+  // Chrome 152 rebuilt the vertical strip on the unified TabCollectionNode
+  // system (chrome/browser/ui/views/tabs/common/tab_strip_view.h): the
+  // container is `UnpinnedTabContainerView` and tabs are `TabView`. The
+  // horizontal strip moves to the same classes once
+  // `tabs::kTabStripUnification` ships enabled.
+  kUnified,
 };
 
 struct TabContainer {
@@ -56,11 +64,11 @@ struct TabContainer {
   TabContainerKind kind = TabContainerKind::kHorizontal;
 };
 
-// Tab UI resolved for one top-level window, kept until an element dies or the
-// window/fullscreen state changes. UIA elements are live references, so
+// Tab UI resolved for one top-level window, kept until validation fails or
+// the window/fullscreen state changes. UIA elements are live references, so
 // property reads on cached elements (bounding rectangles in particular) track
-// resizes without re-resolving; a re-created tab strip fails the read instead,
-// which invalidates the entry.
+// resizes without re-resolving; staleness is detected by rectangle checks in
+// `GetValidatedTabUi`, not by failing reads.
 struct TabUiCache {
   HWND window = nullptr;
   bool fullscreen = false;
@@ -87,8 +95,13 @@ struct UiaSession {
 };
 
 UiaSession& GetThreadLocalUiaSession() {
-  thread_local UiaSession session;
-  return session;
+  // UI Automation proxies can block while being released from Chrome's UI
+  // thread during process teardown. Keep the apartment-bound session isolated
+  // per thread, but intentionally give it process lifetime so no COM cleanup
+  // runs from the injected DLL's TLS teardown path. Windows reclaims the
+  // allocation and COM references when the process exits.
+  thread_local UiaSession* session = new UiaSession;
+  return *session;
 }
 
 bool CreateClassCondition(const ComPtr<IUIAutomation>& automation,
@@ -125,9 +138,13 @@ bool InitializeClassConditions(UiaSession* session) {
          CreateClassCondition(
              session->automation, L"VerticalUnpinnedTabContainerView",
              &conditions.vertical_unpinned_tab_container_view) &&
+         CreateClassCondition(session->automation, L"UnpinnedTabContainerView",
+                              &conditions.unpinned_tab_container_view) &&
          CreateClassCondition(session->automation, L"Tab", &conditions.tab) &&
          CreateClassCondition(session->automation, L"VerticalTabView",
                               &conditions.vertical_tab_view) &&
+         CreateClassCondition(session->automation, L"TabView",
+                              &conditions.tab_view) &&
          CreateClassCondition(session->automation, L"TabCloseButton",
                               &conditions.tab_close_button) &&
          CreateClassCondition(session->automation, L"BookmarkButton",
@@ -273,6 +290,52 @@ bool HasAnyClassName(
   return std::ranges::contains(expected_class_names, class_name_view);
 }
 
+ComPtr<IUIAutomationElement> FindBrowserViewFromTopChrome(
+    const UiaSession& session,
+    HWND window) {
+  RECT client_rect;
+  if (!window || !GetClientRect(window, &client_rect) ||
+      client_rect.right - client_rect.left <= 1 ||
+      client_rect.bottom - client_rect.top <= 1) {
+    return nullptr;
+  }
+
+  POINT point{client_rect.left + 1, client_rect.top + 1};
+  if (!ClientToScreen(window, &point)) {
+    return nullptr;
+  }
+
+  // In a normal tabbed window, the top-left client point stays on browser
+  // chrome above the find widget. Require the exact top-level Views HWND so
+  // point lookup cannot start from a hosted child such as web content.
+  const HWND point_window = WindowFromPoint(point);
+  if (point_window != window || !IsChromeWindow(point_window)) {
+    return nullptr;
+  }
+
+  ComPtr<IUIAutomationElement> element;
+  if (FAILED(session.automation->ElementFromPoint(
+          point, element.ReleaseAndGetAddressOf())) ||
+      !element) {
+    return nullptr;
+  }
+
+  constexpr int kMaxAncestorDepth = 12;
+  for (int depth = 0; element && depth < kMaxAncestorDepth; ++depth) {
+    if (HasClassName(element, L"BrowserView")) {
+      return element;
+    }
+
+    ComPtr<IUIAutomationElement> parent;
+    if (FAILED(session.control_view_walker->GetParentElement(
+            element.Get(), parent.ReleaseAndGetAddressOf()))) {
+      return nullptr;
+    }
+    element = std::move(parent);
+  }
+  return nullptr;
+}
+
 bool IsValidBookmark(const ComPtr<IUIAutomationElement>& element) {
   if (!HasAnyClassName(element, {L"BookmarkButton", L"MenuItemView"})) {
     return false;
@@ -287,6 +350,15 @@ bool IsValidBookmark(const ComPtr<IUIAutomationElement>& element) {
          (view.contains(L':') || view.contains(L'.'));
 }
 
+// Walker-based traversal has a blind spot on Chrome 152+'s unified tab strip:
+// Chromium materializes the accessibility subtree below `TabStripView`
+// lazily, and until a scoped FindFirst/FindAll has touched it, walker
+// navigation (raw and control view alike) reports the node as childless --
+// Find queries reach the tabs regardless. Callers must therefore only anchor
+// this traversal on containers that were themselves resolved via a scoped
+// Find (`FindTabContainerInRegion` guarantees that order); anchoring on a
+// walker-discovered node such as `TabStripView` can silently count zero.
+// Observed on Canary 152.0.7956.0 while debugging issue #275.
 template <typename Visitor>
 bool TraverseDescendantsRaw(const UiaSession& session,
                             const ComPtr<IUIAutomationElement>& root,
@@ -516,15 +588,29 @@ TreeScope GetTabElementScope(TabContainerKind kind) {
 }
 
 std::wstring_view GetTabElementClassName(TabContainerKind kind) {
-  return kind == TabContainerKind::kHorizontal ? L"Tab" : L"VerticalTabView";
+  switch (kind) {
+    case TabContainerKind::kHorizontal:
+      return L"Tab";
+    case TabContainerKind::kVertical:
+      return L"VerticalTabView";
+    case TabContainerKind::kUnified:
+      return L"TabView";
+  }
+  return L"Tab";
 }
 
 const ComPtr<IUIAutomationCondition>& GetTabElementCondition(
     const UiaSession& session,
     TabContainerKind kind) {
-  return kind == TabContainerKind::kHorizontal
-             ? session.class_conditions.tab
-             : session.class_conditions.vertical_tab_view;
+  switch (kind) {
+    case TabContainerKind::kHorizontal:
+      return session.class_conditions.tab;
+    case TabContainerKind::kVertical:
+      return session.class_conditions.vertical_tab_view;
+    case TabContainerKind::kUnified:
+      return session.class_conditions.tab_view;
+  }
+  return session.class_conditions.tab;
 }
 
 bool IsWindowFullScreen(HWND hwnd) {
@@ -563,6 +649,18 @@ std::optional<TabContainer> FindTabContainerInRegion(
             region,
             session.class_conditions.vertical_unpinned_tab_container_view)) {
       return TabContainer{container, TabContainerKind::kVertical};
+    }
+    // Chrome 152 vertical strip (unified TabCollectionNode system): the
+    // region name is unchanged but the subtree is `TabStripView ▸ ScrollView
+    // ▸ Viewport ▸ UnpinnedTabContainerView ▸ TabView`. Anchoring on the
+    // unpinned container mirrors the pre-152 behavior (pinned tabs live in a
+    // sibling `PinnedTabContainerView` and stay out of hit-testing/counts).
+    // The scoped `FindFirst` also matters functionally: Chromium materializes
+    // this subtree lazily, and tree-walker navigation below `TabStripView`
+    // returns no children until a scoped Find query has touched it.
+    if (const auto container = FindFirstDescendantByClass(
+            region, session.class_conditions.unpinned_tab_container_view)) {
+      return TabContainer{container, TabContainerKind::kUnified};
     }
     return std::nullopt;
   }
@@ -604,10 +702,43 @@ TabUiCache* ResolveTabUi(UiaSession* session, HWND hwnd) {
     return nullptr;
   }
 
-  if (const auto region = FindShallowDescendantByClasses(
-          session->control_view_walker.Get(), window_element,
-          {L"HorizontalTabStripRegionView", L"VerticalTabStripRegionView"},
-          /*max_visited=*/256)) {
+  // Chrome 152 renamed `HorizontalTabStripRegionView` to
+  // `HorizontalTabStripRegionViewOld` and put a rewritten
+  // `HorizontalTabStripRegionViewNew` behind `tabs::kTabStripUnification`
+  // (crrev.com/c/7963961, chrome/browser/ui/views/frame/
+  // horizontal_tab_strip_region_view.h). Match the pre-152 and `Old` names;
+  // the flagged `New` view hosts a different subtree (TabCollectionNode) and
+  // needs its own container resolution once it ships enabled.
+  auto region = FindShallowDescendantByClasses(
+      session->control_view_walker.Get(), window_element,
+      {L"HorizontalTabStripRegionView", L"HorizontalTabStripRegionViewOld",
+       L"VerticalTabStripRegionView"},
+      /*max_visited=*/256);
+  if (!region && !fullscreen &&
+      FindShallowDescendantByClasses(session->control_view_walker.Get(),
+                                     window_element, {L"FindBarView"},
+                                     /*max_visited=*/32)) {
+    // `FindBarHost` owns a separate Widget parented to the browser's native
+    // view. While it is visible, `ElementFromHandle` can expose only that
+    // widget's UIA fragment instead of `BrowserView`.
+    // https://source.chromium.org/chromium/chromium/src/+/main:chrome/browser/ui/views/find_bar_host.cc
+    DebugLog(L"UIA: recovering tab UI while find bar is visible");
+    const auto browser_view = FindBrowserViewFromTopChrome(*session, hwnd);
+    if (!browser_view) {
+      DebugLog(L"UIA: failed to recover BrowserView from browser chrome");
+      return nullptr;
+    }
+    region = FindShallowDescendantByClasses(
+        session->control_view_walker.Get(), browser_view,
+        {L"HorizontalTabStripRegionView", L"HorizontalTabStripRegionViewOld",
+         L"VerticalTabStripRegionView"},
+        /*max_visited=*/256);
+    if (!region) {
+      DebugLog(L"UIA: recovered BrowserView has no tab strip region");
+    }
+  }
+
+  if (region) {
     const bool vertical = HasClassName(region, L"VerticalTabStripRegionView");
     if (auto container = FindTabContainerInRegion(*session, region, vertical)) {
       cache.region = region;
@@ -625,13 +756,16 @@ TabUiCache* ResolveTabUi(UiaSession* session, HWND hwnd) {
     // browser windows.
     if (const auto container = FindShallowDescendantByClasses(
             session->raw_view_walker.Get(), window_element,
-            {L"TabContainerImpl", L"VerticalUnpinnedTabContainerView"},
+            {L"TabContainerImpl", L"VerticalUnpinnedTabContainerView",
+             L"UnpinnedTabContainerView"},
             /*max_visited=*/512)) {
-      const bool vertical =
-          HasClassName(container, L"VerticalUnpinnedTabContainerView");
-      cache.container =
-          TabContainer{container, vertical ? TabContainerKind::kVertical
-                                           : TabContainerKind::kHorizontal};
+      TabContainerKind kind = TabContainerKind::kHorizontal;
+      if (HasClassName(container, L"VerticalUnpinnedTabContainerView")) {
+        kind = TabContainerKind::kVertical;
+      } else if (HasClassName(container, L"UnpinnedTabContainerView")) {
+        kind = TabContainerKind::kUnified;
+      }
+      cache.container = TabContainer{container, kind};
       return &cache;
     }
   }
@@ -639,11 +773,20 @@ TabUiCache* ResolveTabUi(UiaSession* session, HWND hwnd) {
   return nullptr;
 }
 
-// Returns the cached tab UI for `hwnd` with liveness proven by a bounding-
-// rectangle read on the gate element, retrying once with a fresh resolve when
-// the cached element has died (tab strip re-created, window layout changed).
-// `gate_rect` receives the live rectangle of the tab strip region (or of the
-// container in the fullscreen fallback) for point gating.
+// Returns the cached tab UI for `hwnd`, retrying once with a fresh resolve
+// when validation fails. `gate_rect` receives the live rectangle of the tab
+// strip region (or of the container in the fullscreen fallback) for point
+// gating.
+//
+// A failing read is not a usable staleness signal here: toggling between
+// horizontal and vertical tabs keeps both region views alive as `BrowserView`
+// children and only destroys/recreates the inner tab strip
+// (`BrowserView::OnVerticalTabStripModeChanged` in
+// chrome/browser/ui/views/frame/browser_view.cc), and Chromium's UIA provider
+// answers rectangle reads on the hidden region and on the destroyed container
+// with S_OK and an empty rectangle rather than an error. Outside fullscreen a
+// live tab strip always has a non-empty rectangle, so an empty region or
+// container rectangle marks a cache entry orphaned by a layout toggle.
 TabUiCache* GetValidatedTabUi(UiaSession* session, HWND hwnd, RECT* gate_rect) {
   for (int attempt = 0; attempt < 2; ++attempt) {
     TabUiCache* ui = ResolveTabUi(session, hwnd);
@@ -654,7 +797,19 @@ TabUiCache* GetValidatedTabUi(UiaSession* session, HWND hwnd, RECT* gate_rect) {
     const ComPtr<IUIAutomationElement>& gate =
         ui->region ? ui->region : ui->container.element;
     if (SUCCEEDED(gate->get_CurrentBoundingRectangle(gate_rect))) {
-      return ui;
+      if (!ui->region) {
+        // Fullscreen raw-view fallback: the auto-hidden strip may
+        // legitimately report an empty rectangle, so a successful read stays
+        // the only gate.
+        return ui;
+      }
+      RECT container_rect;
+      if (!IsRectEmpty(gate_rect) &&
+          SUCCEEDED(ui->container.element->get_CurrentBoundingRectangle(
+              &container_rect)) &&
+          !IsRectEmpty(&container_rect)) {
+        return ui;
+      }
     }
     session->tab_ui_cache = TabUiCache();
   }
@@ -909,6 +1064,22 @@ FindBookmarkCoveringPoint(const UiaSession& session, HWND window, POINT pt) {
           {L"TopContainerView"}, /*max_visited=*/256)) {
     return FindBookmarkInAnchor(top_container,
                                 session.class_conditions.bookmark_button, pt);
+  }
+
+  // `FindBarHost` is a separate widget positioned from
+  // `BrowserView::find_bar_host_view()` (chrome/browser/ui/views/
+  // find_bar_host.cc and frame/browser_view.h). While it is visible, UIA can
+  // expose only `FindBarView` from the root HWND. Point lookup still reaches
+  // uncovered browser chrome, but keep it gated on a Views HWND so a page
+  // click never crosses `Chrome_RenderWidgetHostHWND`.
+  const HWND point_window = WindowFromPoint(pt);
+  if (point_window && IsChromeWindow(point_window)) {
+    ComPtr<IUIAutomationElement> pointed;
+    if (SUCCEEDED(session.automation->ElementFromPoint(
+            pt, pointed.ReleaseAndGetAddressOf())) &&
+        IsValidBookmark(pointed)) {
+      return pointed;
+    }
   }
 
   // Bookmark folder menu: its own top-level popup window, all views, so the
