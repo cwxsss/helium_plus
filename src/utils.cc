@@ -229,10 +229,15 @@ void ExecuteCommand(int id, HWND hwnd) {
   if (hwnd == 0) {
     hwnd = GetForegroundWindow();
   }
-  // hwnd = GetTopWnd(hwnd);
-  // hwnd = GetForegroundWindow();
-  // PostMessage(hwnd, WM_SYSCOMMAND, id, 0);
-  ::SendMessageTimeoutW(hwnd, WM_SYSCOMMAND, id, 0, 0, 1000, 0);
+  if (!hwnd) {
+    return;
+  }
+  if (const HWND root = ::GetAncestor(hwnd, GA_ROOT)) {
+    hwnd = root;
+  }
+  // Tab operations run in a mouse hook. Posting avoids re-entering Chromium
+  // while the hook is still handling the double-click sequence.
+  ::PostMessageW(hwnd, WM_SYSCOMMAND, id, 0);
 }
 
 void LaunchCommands(const std::wstring& get_commands) {

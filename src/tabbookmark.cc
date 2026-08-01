@@ -374,13 +374,6 @@ bool HandleBookmark(const MOUSEHOOKSTRUCT* pmouse) {
 bool TabBookmarkMouseHandler(WPARAM wParam, LPARAM lParam) {
   PMOUSEHOOKSTRUCT pmouse = reinterpret_cast<PMOUSEHOOKSTRUCT>(lParam);
 
-  if (wParam == WM_LBUTTONDOWN || wParam == WM_LBUTTONUP ||
-      wParam == WM_LBUTTONDBLCLK) {
-    if (IsOnWindowControlButton(pmouse->pt)) {
-      return false;
-    }
-  }
-
   static bool wheel_tab_ing_with_rbutton = false;
   // Set when a tab-closing handler succeeds. While active, subsequent messages
   // in the same click sequence are swallowed to prevent Windows' consecutive
@@ -388,22 +381,48 @@ bool TabBookmarkMouseHandler(WPARAM wParam, LPARAM lParam) {
   static bool closing_tab_by_dblclk = false;
   static bool closing_tab_by_middle = false;
   static bool closing_tab_by_right = false;
+  // Windows pairs nearby clicks into one double-click by time and distance.
+  // Close a tab only when the first click was on a tab body.
+  static bool last_lbutton_down_on_tab = false;
+
+  if (wParam == WM_LBUTTONDOWN || wParam == WM_LBUTTONUP ||
+       wParam == WM_LBUTTONDBLCLK) {
+    if (IsOnWindowControlButton(pmouse->pt)) {
+      // Keep the existing direct pass-through for caption buttons, but clear a
+      // stale close state before the next button-up arrives.
+      if (wParam == WM_LBUTTONDOWN) {
+        closing_tab_by_dblclk = false;
+        last_lbutton_down_on_tab = false;
+      }
+      return false;
+    }
+  }
 
   switch (wParam) {
     case WM_MOUSEMOVE:
       HandleHoverTab(pmouse);
       return false;
     case WM_LBUTTONDOWN:
+    case WM_NCLBUTTONDOWN:
       CancelHoverTabTimer();
-      // Simply record the position of `LBUTTONDOWN` for drag detection
       closing_tab_by_dblclk = false;
-      lbutton_down_point = pmouse->pt;
+      last_lbutton_down_on_tab = false;
+      if (wParam == WM_LBUTTONDOWN) {
+        // Simply record the position of `LBUTTONDOWN` for drag detection.
+        lbutton_down_point = pmouse->pt;
+        if (config.IsDoubleClickClose()) {
+          const auto hit = FindTabHitResult(pmouse->pt, false, true);
+          last_lbutton_down_on_tab = hit && !hit->on_close_button;
+        }
+      }
       return false;
     case WM_MBUTTONDOWN:
+    case WM_NCMBUTTONDOWN:
       CancelHoverTabTimer();
       closing_tab_by_middle = false;
       return false;
     case WM_RBUTTONDOWN:
+    case WM_NCRBUTTONDOWN:
       CancelHoverTabTimer();
       closing_tab_by_right = false;
       return false;
@@ -420,6 +439,11 @@ bool TabBookmarkMouseHandler(WPARAM wParam, LPARAM lParam) {
         return true;
       }
       return false;
+    case WM_NCLBUTTONUP:
+      // The trailing UP of a double-click close can be non-client when the tab
+      // strip becomes caption space. A later NC UP belongs to a new gesture,
+      // whose button-down has already cleared the state.
+      return closing_tab_by_dblclk;
     case WM_RBUTTONUP:
       if (closing_tab_by_right) {
         return true;
@@ -454,6 +478,9 @@ bool TabBookmarkMouseHandler(WPARAM wParam, LPARAM lParam) {
         // at the same position (no WM_LBUTTONDOWN in between). Swallow
         // them to ensure one double-click gesture closes exactly one tab.
         return true;
+      }
+      if (!last_lbutton_down_on_tab) {
+        return false;
       }
       if (HandleDoubleClick(pmouse)) {
         // Swallow the double-click so Chrome does not process it on the
